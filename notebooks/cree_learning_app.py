@@ -22,47 +22,84 @@ from pathlib import Path
 WEBRTC_AVAILABLE = False
 
 
-# Set page config
+# Set the configuration for the Streamlit app page
 st.set_page_config(
-    page_title="Cree Language Learning App",
-    page_icon="🌿",
-    layout="wide"
+    page_title="Cree Language Learning App",     # Sets the title shown in the browser tab
+    page_icon="🌿",     # Sets the favicon (a small emoji icon representing the app)
+    layout="wide"       # Uses the full width of the browser window for better UI spacing
 )
 
-# Constants for audio app - Fixed paths for cloud deployment
+# -----------------------------------------------
+# Constants for the audio matching component
+# These paths are fixed and set relative to the app root
+# to ensure compatibility in both local and cloud deployments
+# -----------------------------------------------
+# Directory containing audio model files and metadata
 MODELS_DIR = "models/audio"
+# Path to the precomputed Whisper audio feature vectors (NumPy format)
 FEATURES_PATH = os.path.join(MODELS_DIR, "features.npy")
+# Path to the trained k-NN model used for audio similarity search
 KNN_MODEL_PATH = os.path.join(MODELS_DIR, "knn_model.pkl")
+# Path to the list of Cree word labels corresponding to the audio samples
 LABELS_PATH = os.path.join(MODELS_DIR, "labels.json")
+# Path to the list of audio file paths (used for playback and lookup)
 PATHS_PATH = os.path.join(MODELS_DIR, "paths.json")
 
+# -----------------------------------------------
 # Global variable to store recorded audio
+# This is needed so the recorded audio remains available
+# even after Streamlit re-runs the script (which happens often)
+# -----------------------------------------------
 if 'recorded_audio' not in st.session_state:
-    st.session_state.recorded_audio = None
+    st.session_state.recorded_audio = None     # Initialize with None if not already set
 
-# Audio recording class
+# -----------------------------------------------
+# AudioRecorder class
+# A custom utility to handle in-app audio recording,
+# frame processing, saving to WAV, and clearing data.
+# -----------------------------------------------
 class AudioRecorder:
     def __init__(self):
+        # Initialize an empty list to store audio frames as they come in
         self.frames = []
-        self.sample_rate = 16000  # 16kHz for Whisper compatibility
+        # Set sample rate to 16kHz, which is required for compatibility with Whisper
+        self.sample_rate = 16000
         
     def process_audio_frame(self, frame):
-        """Process each audio frame from the recorder"""
+        """
+        Process a single audio frame.
+        Args:
+            frame: An audio frame from the Streamlit recorder.
+        Returns:
+            The original frame (unmodified), but stores processed samples internally.
+        """
+        # Convert frame to a NumPy array of type float32
         sound = frame.to_ndarray().astype(np.float32)
-        # Convert to mono if stereo
+        # If stereo (2 channels), average them to convert to mono
         if len(sound.shape) > 1:
             sound = sound.mean(axis=1)
+        # Append this frame’s samples to the list of recorded frames
         self.frames.extend(sound)
         return frame
     
     def get_audio_data(self):
-        """Get the recorded audio as numpy array"""
+        """
+        Get the entire recorded audio as a NumPy array.
+        Returns:
+            np.ndarray or None: All recorded samples as a 1D float array.
+        """
         if self.frames:
             return np.array(self.frames, dtype=np.float32)
         return None
     
     def save_as_wav(self, filename):
-        """Save recorded audio as WAV file"""
+        """
+        Save the recorded audio to a WAV file on disk.
+        Args:
+            filename (str): Path to the output WAV file.
+        Returns:
+            bool: True if saving was successful, False if there was no data to save.
+        """
         if self.frames:
             audio_data = np.array(self.frames, dtype=np.float32)
             # Normalize audio
@@ -74,12 +111,27 @@ class AudioRecorder:
         return False
     
     def clear(self):
-        """Clear recorded frames"""
+        """
+        Clear all previously recorded frames.
+        Useful if the user wants to re-record.
+        """
         self.frames = []
 
-# Helper function to check if files exist
 def check_audio_files():
-    """Check if all required audio model files exist"""
+    """
+    Check whether all required audio model files are available.
+
+    Returns:
+        tuple:
+            - (bool): True if all files exist, False otherwise.
+            - (list of str): A list of missing file paths, if any.
+
+    Required files:
+        - features.npy: Precomputed Whisper embeddings.
+        - knn_model.pkl: Trained k-NN model.
+        - labels.json: Cree word labels for each audio file.
+        - paths.json: File paths of the stored dataset audio clips.
+    """
     required_files = [FEATURES_PATH, KNN_MODEL_PATH, LABELS_PATH, PATHS_PATH]
     missing_files = []
     
@@ -89,10 +141,25 @@ def check_audio_files():
     
     return len(missing_files) == 0, missing_files
 
-# Cache functions for audio app
+
 @st.cache_resource
 def load_whisper_model():
-    """Load and cache the Whisper model with error handling"""
+    """
+    Load and cache the Whisper processor and model.
+
+    Returns:
+        tuple:
+            - processor: WhisperProcessor object for preprocessing audio.
+            - model: WhisperModel for generating audio embeddings.
+            - device: Device identifier ("cpu" in this case).
+        On failure:
+            Returns (None, None, None) and shows an error message in the app.
+
+    Notes:
+        - Uses the small Whisper model to reduce memory usage.
+        - Forces CPU execution for cloud compatibility (no GPU dependencies).
+        - Caches result using Streamlit’s `@st.cache_resource` to improve performance.
+    """
     try:
         # Use smaller model for cloud deployment to reduce memory usage
         model_name = "openai/whisper-small" 
@@ -112,7 +179,23 @@ def load_whisper_model():
 
 @st.cache_data
 def load_dataset():
-    """Load the pre-computed features and metadata with error handling"""
+    """
+    Load the precomputed audio features, labels, paths, and k-NN model.
+
+    Returns:
+        tuple:
+            - features (np.ndarray): Audio feature vectors (Whisper embeddings).
+            - labels (List[str]): Cree word labels for each audio file.
+            - paths (List[str]): File paths to corresponding audio files.
+            - knn_model: Trained k-NN model for similarity search.
+
+        On failure:
+            Returns (None, None, None, None) and logs helpful debugging info.
+
+    Notes:
+        - Uses @st.cache_data to avoid reloading on every Streamlit rerun.
+        - Includes robust error handling and debugging support.
+    """
     try:
         # Check if files exist first
         files_exist, missing_files = check_audio_files()
@@ -137,10 +220,20 @@ def load_dataset():
         st.error(f"Files in current directory: {os.listdir('.')}")
         return None, None, None, None
 
-# Cache function for text app
 @st.cache_resource
 def load_cree_model():
-    """Load and cache the Cree learning model with error handling"""
+    """
+    Load and cache the Cree text matching model.
+
+    Returns:
+        CreeLearningModel: The trained model instance used in the text app.
+        On failure: Returns None and logs helpful debugging messages.
+
+    Notes:
+        - Uses a fixed file path compatible with cloud deployment.
+        - Includes robust error handling for missing files.
+        - Uses @st.cache_resource to avoid reloading the model on each rerun.
+    """
     try:
         # Fixed path for cloud deployment
         model_path = "models/cree_learning_model.pkl" 
@@ -162,7 +255,26 @@ def load_cree_model():
 
 
 def load_audio(path, sample_rate=16000):
-    """Load and preprocess audio file with soundfile instead of torchaudio"""
+    """
+    Load and preprocess an audio file using `soundfile`.
+
+    Args:
+        path (str): Path to the audio file (WAV format).
+        sample_rate (int): Desired sampling rate for the audio (default is 16000 for Whisper).
+
+    Returns:
+        tuple:
+            - audio (np.ndarray): 1D NumPy array of audio samples (mono).
+            - sample_rate (int): Final sample rate after resampling.
+
+        On failure:
+            Returns (None, None) and logs the error.
+
+    Notes:
+        - Uses the `soundfile` (sf) library instead of torchaudio for wider compatibility.
+        - Converts stereo to mono by averaging channels.
+        - Resamples audio to 16kHz if necessary for Whisper compatibility.
+    """
     try:
         # Use soundfile to load WAV
         audio, sr = sf.read(path)
@@ -183,7 +295,25 @@ def load_audio(path, sample_rate=16000):
         
 
 def extract_whisper_embedding(audio_path, processor, model):
-    """Extract Whisper embeddings from audio file with error handling"""
+    """
+    Extract Whisper encoder embeddings from an audio file.
+
+    Args:
+        audio_path (str): Path to the input audio file.
+        processor (WhisperProcessor): Preprocessing tool for audio inputs.
+        model (WhisperModel): Pretrained Whisper model (encoder used for feature extraction).
+
+    Returns:
+        np.ndarray or None:
+            - A 1D NumPy array representing the mean Whisper encoder embedding of the audio.
+            - Returns None if loading or processing fails.
+
+    Notes:
+        - Converts raw audio into model-ready input using the processor.
+        - Uses the encoder of the Whisper model to extract deep audio representations.
+        - Aggregates embeddings by averaging across time steps.
+        - Includes error handling to avoid crashing the app if audio is bad or missing.
+    """
     try:
         audio, sr = load_audio(audio_path)
         if audio is None:
@@ -201,7 +331,26 @@ def extract_whisper_embedding(audio_path, processor, model):
         return None
 
 def extract_whisper_embedding_from_array(audio_array, sample_rate, processor, model):
-    """Extract Whisper embeddings from audio numpy array"""
+    """
+    Extract Whisper encoder embeddings from a raw audio NumPy array.
+
+    Args:
+        audio_array (np.ndarray): 1D float array containing audio samples (must be mono).
+        sample_rate (int): Sampling rate of the audio data (should be 16000 for Whisper).
+        processor (WhisperProcessor): Used to preprocess audio into model input format.
+        model (WhisperModel): Whisper model to extract embeddings from the encoder.
+
+    Returns:
+        np.ndarray or None:
+            - A 1D NumPy array representing the averaged Whisper encoder embedding.
+            - Returns None if an error occurs.
+
+    Notes:
+        - This function is used when audio is already in memory (not from file).
+        - Similar to extract_whisper_embedding(), but input is an array not a file path.
+        - Embedding is computed by averaging encoder outputs across time steps.
+        - Includes error handling to keep the app running on failure.
+    """
     try:
         inputs = processor(audio_array, sampling_rate=sample_rate, return_tensors="pt")
         input_features = inputs.input_features.to(model.device)
@@ -215,7 +364,32 @@ def extract_whisper_embedding_from_array(audio_array, sample_rate, processor, mo
         return None
 
 def query_audio(audio_path, knn_model, labels, paths, processor, model, top_k=3):
-    """Find similar audio files with error handling"""
+    """
+    Perform audio similarity search using Whisper embeddings and a k-NN model.
+
+    Args:
+        audio_path (str): Path to the input audio file to be matched.
+        knn_model (NearestNeighbors): Pre-trained k-NN model for finding nearest embeddings.
+        labels (list of str): List of Cree words corresponding to dataset audio samples.
+        paths (list of str): List of file paths for the dataset audio samples.
+        processor (WhisperProcessor): Preprocessing tool for audio input.
+        model (WhisperModel): Whisper model used to extract embeddings.
+        top_k (int): Number of nearest matches to return (default is 3).
+
+    Returns:
+        list of dict: Each dict contains:
+            - rank (int): Rank of the result (1 is most similar).
+            - label (str): Cree word label for the matched sample.
+            - distance (float): Euclidean distance between query and match.
+            - path (str): File path of the matched audio sample.
+
+        Returns an empty list if an error occurs or embedding extraction fails.
+
+    Notes:
+        - Uses Whisper to extract audio embedding from input file.
+        - Finds the top_k closest matches using Euclidean distance.
+        - Returns human-readable results with ranks and metadata.
+    """
     try:
         query_emb = extract_whisper_embedding(audio_path, processor, model)
         if query_emb is None:
@@ -239,7 +413,33 @@ def query_audio(audio_path, knn_model, labels, paths, processor, model, top_k=3)
         return []
 
 def query_audio_from_array(audio_array, sample_rate, knn_model, labels, paths, processor, model, top_k=3):
-    """Find similar audio files from numpy array with error handling"""
+    """
+    Perform audio similarity search using a NumPy audio array (in-memory audio).
+
+    Args:
+        audio_array (np.ndarray): 1D float array of audio samples (mono).
+        sample_rate (int): Sampling rate of the input audio.
+        knn_model (NearestNeighbors): Trained k-NN model for nearest neighbor search.
+        labels (list of str): Cree word labels for dataset audio files.
+        paths (list of str): File paths to dataset audio files.
+        processor (WhisperProcessor): Whisper processor for audio preprocessing.
+        model (WhisperModel): Whisper model to extract embeddings.
+        top_k (int): Number of top matches to return (default is 3).
+
+    Returns:
+        list of dict: Each result contains:
+            - rank (int): Ranking (1 = closest match).
+            - label (str): Cree word label of the matched audio.
+            - distance (float): Distance score (lower = more similar).
+            - path (str): File path of the matched sample.
+
+        Returns an empty list if extraction fails or an error occurs.
+
+    Notes:
+        - This version takes raw audio data in memory (not from disk).
+        - Embedding is computed using the Whisper encoder, then matched using k-NN.
+        - Useful when recording audio live in the app (no file saved).
+    """
     try:
         query_emb = extract_whisper_embedding_from_array(audio_array, sample_rate, processor, model)
         if query_emb is None:
@@ -263,7 +463,21 @@ def query_audio_from_array(audio_array, sample_rate, knn_model, labels, paths, p
         return []
 
 def get_audio_player_html(audio_path):
-    """Create HTML audio player with error handling"""
+    """
+    Generate HTML for an inline audio player that can be embedded in Streamlit.
+
+    Args:
+        audio_path (str): Path to the audio file to be played (WAV or MP3).
+
+    Returns:
+        str: A string containing HTML markup for an audio player.
+             Returns an error message in HTML format if the file is missing or cannot be read.
+
+    Notes:
+        - The audio file is read and encoded in base64 so it can be embedded directly in HTML.
+        - Automatically detects audio format (WAV or MP3) based on file extension.
+        - Includes error handling for file access issues.
+    """
     try:
         if not os.path.exists(audio_path):
             return "<p>Audio file not found</p>"
@@ -288,6 +502,25 @@ def get_audio_player_html(audio_path):
 
 
 def simple_audio_recorder():
+    """
+    Display an embedded browser-based audio recorder in Streamlit using HTML + JavaScript.
+
+    Functionality:
+    - Allows the user to record audio directly in the browser.
+    - Converts the audio to WAV format (16kHz, mono) for Whisper compatibility.
+    - Provides download link for the recorded file.
+    - No audio data is sent to the server — all processing is done client-side.
+
+    UI Elements:
+    - Start and Stop recording buttons.
+    - Embedded audio playback for preview.
+    - Download link for the recorded WAV file.
+
+    Notes:
+    - Uses Streamlit's components.html to embed raw HTML and JS.
+    - Uses the Web Audio API for recording and exporting audio.
+    """
+
     st.subheader("🎙️ Record Audio and Download WAV")
 
     components.html("""
@@ -438,6 +671,18 @@ def simple_audio_recorder():
 
 
 def audio_listening_page():
+    """
+    Streamlit page for listening to all available Cree audio files in the dataset.
+
+    Features:
+    - Displays the number of available audio samples (from the /data/wav directory).
+    - Allows users to search for words using a text input.
+    - Displays each word (derived from filename) alongside a button to play the corresponding audio.
+
+    Notes:
+    - Assumes WAV files are stored in `../data/wav/` relative to this script.
+    - All audio files must be in .wav format.
+    """
     st.header("🎧 Listen to Cree Audio Dataset")
 
     AUDIO_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "data", "wav"))
@@ -479,7 +724,10 @@ def audio_listening_page():
 
 
 def audio_learning_app():
-    """Audio Learning/Matching App with recording capability"""
+    """Main function to run the Audio Learning/Matching App with two modes:
+    1. Listening to the dataset
+    2. Matching uploaded/recorded audio using Whisper + KNN
+    """
     # Sidebar for audio page selection
     with st.sidebar:
         st.header("Audio Options")
@@ -680,7 +928,13 @@ def audio_learning_app():
                     os.remove(temp_path)
 
 def text_learning_app():
-    """Text Learning App with better error handling"""
+    """Main function for the Cree Language Text Learning App.
+    
+    Provides 3 features:
+    1. Translate between Cree and English
+    2. Interactive multiple-choice exercises
+    3. Dataset explorer for Cree word lookup
+    """
     st.header("📝 Cree Language Text Learning")
     
     # Load the model
@@ -822,7 +1076,7 @@ def text_learning_app():
             st.error(f"Error exploring dataset: {str(e)}")
 
 def main():
-    """Main app with navigation"""
+    """Main app with navigation between text and audio learning modes"""
     st.title("🌿 Cree Language Learning App")
     
     # Create navigation bar at the top

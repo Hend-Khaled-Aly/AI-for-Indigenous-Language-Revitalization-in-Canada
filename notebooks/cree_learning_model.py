@@ -13,7 +13,21 @@ from sklearn.model_selection import train_test_split
 
 
 class CreeLearningModel:
+    """
+    A class to represent a Cree-English translation learning model.
+
+    This model uses TF-IDF character n-gram vectorization to embed Cree and English words,
+    then applies cosine similarity for translation lookups. It supports multi-meaning
+    mappings, evaluation, and creation of multiple choice exercises.
+    """
     def __init__(self):
+        """
+        Initialize the model with necessary components:
+        - TF-IDF vectorizer for text embedding (character n-grams 1-3)
+        - MultiLabelBinarizer for multilabel metrics (if needed)
+        - Dictionaries for Cree-to-English and English-to-Cree mappings
+        - Placeholders for embeddings and similarity model
+        """
         self.vectorizer = TfidfVectorizer(
             analyzer='char',
             ngram_range=(1, 3),
@@ -21,8 +35,8 @@ class CreeLearningModel:
         )
         self.mlb = MultiLabelBinarizer()
         self.similarity_model = None
-        self.cree_to_english = defaultdict(list)
-        self.english_to_cree = defaultdict(list)
+        self.cree_to_english = defaultdict(list)  # Maps Cree words to list of English meanings
+        self.english_to_cree = defaultdict(list)  # Maps English meanings to list of Cree words
         self.cree_embeddings = None
         self.english_embeddings = None
 
@@ -30,7 +44,18 @@ class CreeLearningModel:
 
     def preprocess_data(self, csv_file_path):
         """
-        Preprocess the Cree-English dataset
+        Load and preprocess Cree-English word pairs from a CSV file.
+
+        Steps:
+        - Load CSV into pandas DataFrame
+        - Strip whitespace and drop empty rows
+        - Populate two-way mappings:
+          Cree -> English (list of meanings)
+          English -> Cree (list of Cree words)
+        - Print dataset statistics and examples of multi-meaning Cree words
+
+        Returns:
+        - Cleaned pandas DataFrame
         """
         print("Loading and preprocessing data...")
         
@@ -38,14 +63,14 @@ class CreeLearningModel:
         df = pd.read_csv(csv_file_path)
         print(f"Original dataset shape: {df.shape}")
         
-        # Clean the data
+        # Remove extra spaces
         df['Cree'] = df['Cree'].str.strip()
         df['English'] = df['English'].str.strip()
         
         # Remove any empty rows
         df = df.dropna()
         
-        # Create mappings
+        # Build mappings, making sure not to duplicate entries
         for _, row in df.iterrows():
             cree_word = row['Cree'].lower()
             english_meaning = row['English'].lower()
@@ -61,7 +86,7 @@ class CreeLearningModel:
         print(f"Unique Cree words: {len(self.cree_to_english)}")
         print(f"Unique English meanings: {len(self.english_to_cree)}")
         
-        # Analyze one-to-many mappings
+        # Analyze how many Cree words have multiple English meanings
         multi_meaning_cree = {k: v for k, v in self.cree_to_english.items() if len(v) > 1}
         print(f"Cree words with multiple meanings: {len(multi_meaning_cree)}")
         
@@ -75,18 +100,22 @@ class CreeLearningModel:
 # ------------------------------------------------------------------------------
     def create_embeddings(self, df):
         """
-        Create TF-IDF embeddings for Cree words and English meanings
+        Generate TF-IDF embeddings for all unique Cree words and English meanings.
+
+        Uses character n-gram TF-IDF vectorization fitted on Cree words, then transforms
+        English meanings with the same vectorizer for comparable vector space.
+
+        Returns:
+        - Lists of unique Cree words and English meanings
         """
         print("\nCreating embeddings...")
         
         # Get unique words and meanings
         unique_cree = list(self.cree_to_english.keys())
         unique_english = list(self.english_to_cree.keys())
-        
-        # Create embeddings for Cree words
+        # Fit vectorizer on Cree words and transform them into embeddings
         self.cree_embeddings = self.vectorizer.fit_transform(unique_cree)
-        
-        # Create embeddings for English meanings (using same vectorizer)
+        # Transform English meanings using the same vectorizer (no refitting)
         self.english_embeddings = self.vectorizer.transform(unique_english)
         
         print(f"Cree embeddings shape: {self.cree_embeddings.shape}")
@@ -98,11 +127,13 @@ class CreeLearningModel:
 
     def build_similarity_model(self):
         """
-        Build a similarity-based model for translation
+        Build a similarity matrix between Cree and English embeddings.
+
+        Uses cosine similarity between all Cree and English vectors, which will
+        later be used for approximate translation lookups.
         """
         print("\nBuilding similarity model...")
-        
-        # Calculate similarity matrix between Cree and English
+
         self.similarity_matrix = cosine_similarity(self.cree_embeddings, self.english_embeddings)
         print(f"Similarity matrix shape: {self.similarity_matrix.shape}")
 
@@ -110,15 +141,25 @@ class CreeLearningModel:
 
     def find_translations(self, cree_word, top_k=5):
         """
-        Find top-k English translations for a Cree word
+        Given a Cree word, find the top-k English translations.
+
+        First attempts direct dictionary lookup; if not found,
+        uses vector similarity with the closest Cree words and returns
+        their known English meanings.
+
+        Parameters:
+        - cree_word (str): Input Cree word to translate
+        - top_k (int): Number of top results to return
+
+        Returns:
+        - List of English meanings (strings)
         """
         cree_word = cree_word.lower().strip()
-        
-        # Direct lookup first
+        # Direct lookup first for speed and accuracy
         if cree_word in self.cree_to_english:
             return self.cree_to_english[cree_word]
         
-        # If not found, use similarity
+        # If no direct match, find most similar Cree words by embedding
         unique_cree = list(self.cree_to_english.keys())
         unique_english = list(self.english_to_cree.keys())
         
@@ -135,16 +176,25 @@ class CreeLearningModel:
             translations = []
             for similar_word in similar_cree_words:
                 translations.extend(self.cree_to_english[similar_word])
-            
+            # Return unique meanings up to top_k results
             return list(set(translations))[:top_k]
-        
+        # If Cree word is not found and no similar words above threshold, return empty list        
         return []
     
 # ------------------------------------------------------------------------------
 
     def find_cree_words(self, english_meaning, top_k=5):
         """
-        Find Cree words for an English meaning
+        Given an English meaning, find the top-k Cree words.
+
+        Similar logic to find_translations but in reverse direction.
+
+        Parameters:
+        - english_meaning (str): English meaning to lookup
+        - top_k (int): Number of top Cree words to return
+
+        Returns:
+        - List of Cree words (strings)
         """
         english_meaning = english_meaning.lower().strip()
         
@@ -177,7 +227,19 @@ class CreeLearningModel:
 
     def create_learning_exercises(self, difficulty='mixed'):
         """
-        Create learning exercises based on the dataset
+        Generate multiple-choice exercises for learners.
+
+        Depending on difficulty:
+        - 'easy': only Cree words with a single English meaning
+        - 'hard': only Cree words with multiple English meanings
+        - 'mixed': all Cree words
+
+        Each exercise presents one Cree word and multiple English choices,
+        with one or more correct answers.
+
+        Returns:
+        - List of exercises (dicts) each containing:
+          cree_word, choices (list), correct_answers (list), and type
         """
         exercises = []
         
@@ -220,7 +282,9 @@ class CreeLearningModel:
 
     def save_model(self, filepath='cree_model.pkl'):
         """
-        Save the trained model
+        Save the trained model state to a file for later reuse.
+
+        Saves vectorizer, mappings, and similarity matrix if present.
         """
         model_data = {
             'vectorizer': self.vectorizer,
@@ -238,7 +302,7 @@ class CreeLearningModel:
 
     def load_model(self, filepath='cree_model.pkl'):
         """
-        Load a saved model
+        Load a previously saved model from file and restore internal state.
         """
         with open(filepath, 'rb') as f:
             model_data = pickle.load(f)
@@ -254,7 +318,19 @@ class CreeLearningModel:
 
     def evaluate_model(self, test_ratio=0.2, random_state=42):
         """
-        Comprehensive model evaluation with multiple metrics
+        Evaluate model performance using various metrics and a test split.
+
+        Metrics include:
+        - Exact match accuracy: All correct meanings predicted
+        - Partial match accuracy: At least one correct meaning predicted
+        - Top-k accuracy: Correct meanings within top 3 and top 5 predictions
+        - Average Jaccard similarity between predicted and true meaning sets
+        - Coverage score: fraction of words for which model returns predictions
+        - Multi-label precision, recall, F1 scores
+
+        Returns:
+        - evaluation_results: dictionary with all metric scores
+        - detailed_results: list with per-word prediction details for analysis
         """
         print("\n=== Model Evaluation ===")
         
@@ -411,7 +487,16 @@ class CreeLearningModel:
 
     def cross_validate_model(self, k_folds=5, random_state=42):
         """
-        Perform k-fold cross validation
+        Perform k-fold cross-validation over the dataset to assess model robustness.
+
+        For each fold:
+        - Split Cree words into test fold
+        - Evaluate exact and partial match accuracies and similarity
+        - Aggregate and print fold-wise results
+
+        Returns:
+        - List of fold-wise results
+        - Summary dictionary with mean and std deviation metrics
         """
         print(f"\n=== {k_folds}-Fold Cross Validation ===")
         
@@ -487,7 +572,15 @@ class CreeLearningModel:
 
     def learning_curve_analysis(self):
         """
-        Analyze how model performance changes with dataset size
+        Analyze how model accuracy changes as more training data is used.
+
+        For increasing fractions of the dataset:
+        - Sample subset as training data
+        - Test on remaining words (up to 50 for efficiency)
+        - Calculate partial match accuracy
+
+        Returns:
+        - List of dictionaries containing dataset size, number of training words, and accuracy
         """
         print("\n=== Learning Curve Analysis ===")
         
@@ -535,7 +628,18 @@ class CreeLearningModel:
 
     def model_confidence_score(self, cree_word, threshold=0.3):
         """
-        Calculate confidence score for a prediction
+        Calculate a confidence score for a given Cree word prediction.
+
+        - Returns 1.0 for exact dictionary match (high confidence)
+        - Otherwise, uses maximum cosine similarity with Cree embeddings,
+          normalized by a threshold
+
+        Parameters:
+        - cree_word (str): Input word to assess confidence
+        - threshold (float): Similarity threshold for normalization
+
+        Returns:
+        - confidence score between 0 and 1 (float)
         """
         predictions = self.find_translations(cree_word, top_k=5)
         
