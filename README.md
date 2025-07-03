@@ -47,12 +47,12 @@ root/
 
 ### 💡 Features
 
-**🧠 Text Learning Module:**
+🧠 Text Learning Module:
 - Translate Cree ↔ English using a KNN-based semantic matching model.
 - Exercise Mode presents users with a random Cree/English word and asks for its translation.
 - Dataset Explorer allows browsing the full dataset.
 
-**🔉 Audio Learning Module:**
+🔉 Audio Learning Module:
 - Match Audio to Word using Whisper for feature extraction and a KNN classifier for nearest match.
 - Listen to Dataset mode to play any of the recorded Cree words.
 
