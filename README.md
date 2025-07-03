@@ -1,14 +1,10 @@
-# AI-for-Indigenous-Language-Revitalization-in-Canada
-
----
-
-## 🪶 Cree Language Learning App
+# 🪶 Cree Language Learning App
 
 This project is a Streamlit-based application designed to support the revitalization of the Cree language. It provides users with tools to translate between Cree and English, practice through exercises, and match spoken audio to Cree words — using both text-based and audio-based machine learning models.
 
 ---
 
-### 📁 Project Structure
+## 📁 Project Structure
 
 ```
 root/
@@ -45,7 +41,7 @@ root/
 
 ---
 
-### 💡 Features
+## 💡 Features
 
 🧠 Text Learning Module:
 - Translate Cree ↔ English using a KNN-based semantic matching model.
@@ -58,7 +54,7 @@ root/
 
 ---
 
-### Setup Instructions
+## Setup Instructions
 
 1. Clone the repository:
 ```
@@ -78,7 +74,7 @@ streamlit run notebooks/cree_learning_app.py
 
 ---
 
-### 🔐 Notes
+## 🔐 Notes
 
 - All models are pre-trained and saved in /models/.
 - No API keys required for offline use.
