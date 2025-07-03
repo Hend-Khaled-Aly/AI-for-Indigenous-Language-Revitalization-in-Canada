@@ -15,8 +15,8 @@ root/
 │   ├── raw/                   # Raw dataset: words + translation + audio URL
 │   │   └── Dataset-Words_Translation_URLS.csv
 │   ├── cleaned/               # Preprocessed and cleaned datasets
-│       ├── cree_dataset.csv / .json              # Final processed dataset
-│       ├── cree_english_text_only.csv            # Only Cree-English text
+│       ├── cree_dataset.csv / .json              #  Post-Scrapping dataset
+│       ├── cree_english_text_only.csv            # Only Cree-English text (Final Text Dataset)
 │       └── NKFC_normalized_cree_english.csv      # From 1st trial cleaning
 │
 ├── models/
