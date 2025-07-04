@@ -1119,6 +1119,13 @@ def text_learning_app():
                         # Push to GitHub
                         push_to_github()
                         st.success("🚀 Changes pushed to GitHub.")
+
+                        # --- 🚨 New addition: reload app ---
+                        st.cache_resource.clear()  # Clear model cache
+                        st.success("🔄 Reloading app to reflect updates...")
+                        import time
+                        time.sleep(2)
+                        st.experimental_rerun()
                 except Exception as e:
                     st.error(f"❌ Error during entry addition or model update: {e}")
 
