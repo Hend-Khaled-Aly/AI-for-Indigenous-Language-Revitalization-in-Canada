@@ -1125,7 +1125,7 @@ def text_learning_app():
                         st.success("🔄 Reloading app to reflect updates...")
                         import time
                         time.sleep(2)
-                        st.experimental_rerun()
+                        st.rerun()
                 except Exception as e:
                     st.error(f"❌ Error during entry addition or model update: {e}")
 
