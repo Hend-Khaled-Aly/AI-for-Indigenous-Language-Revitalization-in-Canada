@@ -10,3 +10,4 @@ soundfile
 scipy
 matplotlib
 python-dotenv
+PyGithub
