@@ -1140,39 +1140,44 @@ def push_to_github():
         repo = g.get_repo(f"{username}/{repo_name}")
         author = InputGitAuthor(author_name, author_email)
 
-        # Files to push
+        # --- Files to push (csv is text, pkl is binary) ---
         files = {
-            "data/cleaned/cree_english_text_only.csv": "data/cleaned/cree_english_text_only.csv",
-            "models/cree_learning_model.pkl": "models/cree_learning_model.pkl"
+            "data/cleaned/cree_english_text_only.csv": "text",
+            "models/cree_learning_model.pkl": "binary"
         }
 
-        for local_path, remote_path in files.items():
-            with open(local_path, 'rb') as file:
-                binary_data = file.read()
-                encoded_content = base64.b64encode(binary_data).decode("utf-8")
+        for file_path, file_type in files.items():
+            with open(file_path, "rb") as f:
+                content_bytes = f.read()
+
+            if file_type == "text":
+                encoded_content = content_bytes.decode("utf-8")   # for CSV or text
+            else:
+                encoded_content = content_bytes        # for PKL (binary)
+
 
             try:
+                remote_file = repo.get_contents(file_path)
                 # Check if file exists → update
-                contents = repo.get_contents(remote_path)
                 repo.update_file(
-                    path=remote_path,
-                    message=f"🔄 Update {remote_path} - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+                    path=file_path,
+                    message=f"🔄 Update {file_path} - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
                     content=encoded_content,
-                    sha=contents.sha,
+                    sha=remote_file.sha,
                     author=author,
                     branch="main"
                 )
-                st.success(f"✅ Updated `{remote_path}` on GitHub.")
+                st.success(f"✅ Updated `{file_path}` on GitHub.")
             except Exception as e:
                 # If not exists → create
                 repo.create_file(
-                    path=remote_path,
-                    message=f"📦 Create {remote_path} - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+                    path=file_path,
+                    message=f"📦 Create {file_path} - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
                     content=encoded_content,
                     author=author,
                     branch="main"
                 )
-                st.success(f"✅ Created `{remote_path}` on GitHub.")
+                st.success(f"✅ Created `{file_path}` on GitHub.")
     except Exception as e:
         st.error(f"❌ Error pushing to GitHub: {e}")
 
