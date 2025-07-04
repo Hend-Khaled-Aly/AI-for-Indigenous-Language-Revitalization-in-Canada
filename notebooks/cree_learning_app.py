@@ -18,12 +18,13 @@ import io
 import wave
 import streamlit.components.v1 as components
 from pathlib import Path
-from dotenv import load_dotenv
 import subprocess
 
 WEBRTC_AVAILABLE = False
 
-load_dotenv()
+token = os.getenv("GITHUB_TOKEN")
+if not token:
+    st.error("GitHub token not found. Please set it in Streamlit secrets.")
 
 # Set the configuration for the Streamlit app page
 st.set_page_config(
@@ -1086,62 +1087,95 @@ def text_learning_app():
         english_input = st.text_input("Enter English translation:")
 
         if st.button("Add Entry"):
-            if cree_input.strip() == "" or english_input.strip() == "":
-                st.warning("Please fill in both fields.")
+            if not cree_input.strip() or not english_input.strip():
+                st.warning("⚠️ Please fill in both Cree and English fields.")
             else:
-                dataset_path = "data/cleaned/cree_english_text_only.csv"
-                df = pd.read_csv(dataset_path)
+                try:
+                    dataset_path = "data/cleaned/cree_english_text_only.csv"
+                    model_path = "models/cree_learning_model.pkl"
 
-                # Normalize input
-                cree_input_clean = cree_input.strip().lower()
-                english_input_clean = english_input.strip().lower()
+                    df = pd.read_csv(dataset_path)
 
-                duplicate = df[
-                    (df['Cree'].str.lower() == cree_input_clean) &
-                    (df['English'].str.lower() == english_input_clean)
-                ]
+                    # Normalize input
+                    cree_input_clean = cree_input.strip().lower()
+                    english_input_clean = english_input.strip().lower()
 
-                if not duplicate.empty:
-                    st.info("This entry already exists in the dataset.")
-                else:
-                    new_row = pd.DataFrame([[cree_input, english_input]], columns=["Cree", "English"])
-                    df = pd.concat([df, new_row], ignore_index=True)
-                    df.to_csv(dataset_path, index=False)
+                    is_duplicate  = df[
+                        (df['Cree'].str.lower() == cree_input_clean) &
+                        (df['English'].str.lower() == english_input_clean)
+                    ]
 
-                    # Retrain model
-                    model = CreeLearningModel()
-                    model.retrain_from_csv_and_save(csv_path=dataset_path, save_path='models/cree_learning_model.pkl')
-                    # Push to GitHub
-                    push_changes_to_github("Added new Cree word from app")
+                    if not is_duplicate.empty:
+                        st.info("This entry already exists in the dataset.")
+                    else:
+                        new_row = pd.DataFrame([[cree_input.strip(), english_input.strip()]], columns=["Cree", "English"])
+                        df = pd.concat([df, new_row], ignore_index=True)
+                        df.to_csv(dataset_path, index=False)
+                        st.success("✅ Entry added to dataset.")
+                        # Retrain model
+                        model = CreeLearningModel()
+                        model.retrain_from_csv_and_save(csv_path=dataset_path, save_path=model_path)
+                        st.success("🧠 Model retrained and saved.")
+                        # Push to GitHub
+                        push_to_github()
+                        st.success("🚀 Changes pushed to GitHub.")
+                except Exception as e:
+                    st.error(f"❌ Error during entry addition or model update: {e}")
 
-                    st.success("✅ New entry added and model retrained successfully.")
 
-def push_changes_to_github(commit_message="Update CSV and model"):
+def push_to_github():
+    from github import InputGitAuthor, Github
+    from datetime import datetime
     try:
-        # Git config (optional, set once)
-        subprocess.run(['git', 'config', 'user.name', 'CreeBot'], check=True)
-        subprocess.run(['git', 'config', 'user.email', 'bot@cree.ai'], check=True)
+        token = st.secrets["GITHUB_TOKEN"]
+        repo_url = st.secrets["GITHUB_REPO_URL"] 
+        author_name = st.secrets["GIT_AUTHOR_NAME"]
+        author_email = st.secrets["GIT_AUTHOR_EMAIL"]
 
-        # Stage updated files
-        subprocess.run(['git', 'add', 'data/cleaned/cree_english_text_only.csv'], check=True)
-        subprocess.run(['git', 'add', 'models/cree_learning_model.pkl'], check=True)
+        # Extract repo name from URL
+        repo_name = repo_url.split("/")[-1].replace(".git", "")
+        username = repo_url.split("/")[-2]
 
-        # Commit
-        subprocess.run(['git', 'commit', '-m', commit_message], check=True)
+        g = Github(token)
+        repo = g.get_repo(f"{username}/{repo_name}")
+        author = InputGitAuthor(author_name, author_email)
 
-        # Push (with token)
-        username = os.getenv("GITHUB_USERNAME")
-        repo = os.getenv("GITHUB_REPO")
-        token = os.getenv("GITHUB_TOKEN")
+        # Files to push
+        files = {
+            "data/cleaned/cree_english_text_only.csv": "data/cleaned/cree_english_text_only.csv",
+            "models/cree_learning_model.pkl": "models/cree_learning_model.pkl"
+        }
 
-        remote_url = f"https://{token}@github.com/{username}/{repo}.git"
+        for local_path, remote_path in files.items():
+            with open(local_path, 'rb') as file:
+                binary_data = file.read()
+                encoded_content = base64.b64encode(binary_data).decode("utf-8")
 
-        subprocess.run(['git', 'push', remote_url], check=True)
+            try:
+                # Check if file exists → update
+                contents = repo.get_contents(remote_path)
+                repo.update_file(
+                    path=remote_path,
+                    message=f"🔄 Update {remote_path} - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+                    content=encoded_content,
+                    sha=contents.sha,
+                    author=author,
+                    branch="main"
+                )
+                st.success(f"✅ Updated `{remote_path}` on GitHub.")
+            except Exception as e:
+                # If not exists → create
+                repo.create_file(
+                    path=remote_path,
+                    message=f"📦 Create {remote_path} - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+                    content=encoded_content,
+                    author=author,
+                    branch="main"
+                )
+                st.success(f"✅ Created `{remote_path}` on GitHub.")
+    except Exception as e:
+        st.error(f"❌ Error pushing to GitHub: {e}")
 
-        print("✅ Changes pushed to GitHub.")
-
-    except subprocess.CalledProcessError as e:
-        print("❌ Git operation failed:", e)
 
 def main():
     """Main app with navigation between text and audio learning modes"""
