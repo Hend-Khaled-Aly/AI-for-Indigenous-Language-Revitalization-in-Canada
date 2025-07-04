@@ -9,3 +9,4 @@ joblib
 soundfile
 scipy
 matplotlib
+python-dotenv

@@ -18,9 +18,12 @@ import io
 import wave
 import streamlit.components.v1 as components
 from pathlib import Path
+from dotenv import load_dotenv
+import subprocess
 
 WEBRTC_AVAILABLE = False
 
+load_dotenv()
 
 # Set the configuration for the Streamlit app page
 st.set_page_config(
@@ -1108,8 +1111,37 @@ def text_learning_app():
                     # Retrain model
                     model = CreeLearningModel()
                     model.retrain_from_csv_and_save(csv_path=dataset_path, save_path='models/cree_learning_model.pkl')
+                    # Push to GitHub
+                    push_changes_to_github("Added new Cree word from app")
 
                     st.success("✅ New entry added and model retrained successfully.")
+
+def push_changes_to_github(commit_message="Update CSV and model"):
+    try:
+        # Git config (optional, set once)
+        subprocess.run(['git', 'config', 'user.name', 'CreeBot'], check=True)
+        subprocess.run(['git', 'config', 'user.email', 'bot@cree.ai'], check=True)
+
+        # Stage updated files
+        subprocess.run(['git', 'add', 'data/cleaned/cree_english_text_only.csv'], check=True)
+        subprocess.run(['git', 'add', 'models/cree_learning_model.pkl'], check=True)
+
+        # Commit
+        subprocess.run(['git', 'commit', '-m', commit_message], check=True)
+
+        # Push (with token)
+        username = os.getenv("GITHUB_USERNAME")
+        repo = os.getenv("GITHUB_REPO")
+        token = os.getenv("GITHUB_TOKEN")
+
+        remote_url = f"https://{token}@github.com/{username}/{repo}.git"
+
+        subprocess.run(['git', 'push', remote_url], check=True)
+
+        print("✅ Changes pushed to GitHub.")
+
+    except subprocess.CalledProcessError as e:
+        print("❌ Git operation failed:", e)
 
 def main():
     """Main app with navigation between text and audio learning modes"""
