@@ -224,7 +224,7 @@ def load_dataset():
         st.error(f"Files in current directory: {os.listdir('.')}")
         return None, None, None, None
 
-@st.cache_resource
+# @st.cache_resource
 def load_cree_model():
     """
     Load and cache the Cree text matching model.
