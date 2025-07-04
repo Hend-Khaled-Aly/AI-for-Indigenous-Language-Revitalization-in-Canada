@@ -138,6 +138,32 @@ class CreeLearningModel:
         print(f"Similarity matrix shape: {self.similarity_matrix.shape}")
 
 # ------------------------------------------------------------------------------
+    def retrain_from_csv_and_save(self, csv_path="data/cleaned/cree_english_text_only.csv", save_path="models/cree_learning_model.pkl"):
+        """
+        Reload data from the given CSV file, rebuild mappings and embeddings, 
+        and save the updated model.
+
+        Parameters:
+        - csv_path: Path to the updated Cree-English dataset
+        - save_path: Where to save the retrained model
+        """
+        print("🔁 Retraining model with updated data...")
+
+        # Step 1: Load and preprocess data
+        df = self.preprocess_data(csv_path)
+
+        # Step 2: Recreate embeddings
+        self.create_embeddings(df)
+
+        # Step 3: Build similarity matrix
+        self.build_similarity_model()
+
+        # Step 4: Save the updated model
+        self.save_model(filepath=save_path)
+
+        print("✅ Model retrained and saved.")
+
+# ------------------------------------------------------------------------------
 
     def find_translations(self, cree_word, top_k=5):
         """

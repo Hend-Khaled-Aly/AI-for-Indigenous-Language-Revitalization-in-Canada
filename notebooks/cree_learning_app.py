@@ -947,7 +947,7 @@ def text_learning_app():
     with st.sidebar:
         st.header("Text Learning Mode")
         mode = st.selectbox("Choose Mode", [
-            "Translate", "Exercise", "Dataset Explorer"])
+            "Translate", "Exercise", "Dataset Explorer", "Add New Entry"])
 
     # --- Translate Mode ---
     if mode == "Translate":
@@ -1074,6 +1074,42 @@ def text_learning_app():
             st.write(f"Average meanings per Cree word: {np.mean([len(v) for v in model.cree_to_english.values()]):.2f}")
         except Exception as e:
             st.error(f"Error exploring dataset: {str(e)}")
+
+    # --- Add New Entry Mode ---
+    elif mode == "Add New Entry":
+        st.subheader("➕ Add New Cree–English Entry")
+
+        cree_input = st.text_input("Enter Cree word:")
+        english_input = st.text_input("Enter English translation:")
+
+        if st.button("Add Entry"):
+            if cree_input.strip() == "" or english_input.strip() == "":
+                st.warning("Please fill in both fields.")
+            else:
+                dataset_path = "data/cleaned/cree_english_text_only.csv"
+                df = pd.read_csv(dataset_path)
+
+                # Normalize input
+                cree_input_clean = cree_input.strip().lower()
+                english_input_clean = english_input.strip().lower()
+
+                duplicate = df[
+                    (df['Cree'].str.lower() == cree_input_clean) &
+                    (df['English'].str.lower() == english_input_clean)
+                ]
+
+                if not duplicate.empty:
+                    st.info("This entry already exists in the dataset.")
+                else:
+                    new_row = pd.DataFrame([[cree_input, english_input]], columns=["Cree", "English"])
+                    df = pd.concat([df, new_row], ignore_index=True)
+                    df.to_csv(dataset_path, index=False)
+
+                    # Retrain model
+                    model = CreeLearningModel()
+                    model.retrain_from_csv_and_save(csv_path=dataset_path, save_path='models/cree_learning_model.pkl')
+
+                    st.success("✅ New entry added and model retrained successfully.")
 
 def main():
     """Main app with navigation between text and audio learning modes"""
