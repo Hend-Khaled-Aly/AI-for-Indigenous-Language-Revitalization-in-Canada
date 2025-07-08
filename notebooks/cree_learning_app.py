@@ -1006,6 +1006,10 @@ def add_audio_to_dataset_ui():
     Streamlit UI for adding new audio to the dataset.
     """
     st.subheader("➕ Add New Audio to Dataset")
+
+    # Initialize session state for GitHub push data
+    if "audio_added" not in st.session_state:
+        st.session_state.audio_added = None
     
     with st.form("add_audio_form"):
         st.markdown("### 📤 Upload New Audio")
@@ -1070,28 +1074,39 @@ def add_audio_to_dataset_ui():
                     
                     if success:
                         st.success(f"✅ {message}")
-                        
-                        # Ask if user wants to push to GitHub
-                        if st.button("🚀 Push to GitHub Repository"):
-                            with st.spinner("📤 Uploading to GitHub..."):
-                                # Push audio file
-                                audio_success, audio_msg = push_audio_to_github(filepath, word)
-                                if audio_success:
-                                    st.success(f"✅ {audio_msg}")
-                                else:
-                                    st.error(f"❌ {audio_msg}")
-                                
-                                # Push model files
-                                model_success, model_msg = push_updated_audio_models_to_github()
-                                if model_success:
-                                    st.success(f"✅ {model_msg}")
-                                else:
-                                    st.error(f"❌ {model_msg}")
+                        # Save details to session state for post-form GitHub push
+                        st.session_state.audio_added = {
+                            "filepath": filepath,
+                            "word": word
+                        }
                     else:
                         st.error(f"❌ {message}")
                 else:
                     st.error("❌ Failed to load Whisper models")
     
+    # Ask if user wants to push to GitHub
+    if st.session_state.audio_added:
+        st.markdown("---")
+        if st.button("🚀 Push to GitHub Repository"):
+            with st.spinner("📤 Uploading to GitHub..."):
+                filepath = st.session_state.audio_added["filepath"]
+                word = st.session_state.audio_added["word"]
+                # Push audio file
+                audio_success, audio_msg = push_audio_to_github(filepath, word)
+                if audio_success:
+                    st.success(f"✅ {audio_msg}")
+                else:
+                    st.error(f"❌ {audio_msg}")
+                                
+                # Push model files
+                model_success, model_msg = push_updated_audio_models_to_github()
+                if model_success:
+                    st.success(f"✅ {model_msg}")
+                else:
+                    st.error(f"❌ {model_msg}")
+            # Optional: clear after push
+            st.session_state.audio_added = None
+
     # Display current dataset stats
     with st.expander("📊 Current Dataset Statistics"):
         try:
