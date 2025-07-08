@@ -21,6 +21,7 @@ from pathlib import Path
 import subprocess
 import re
 from datetime import datetime
+import shutil
 
 WEBRTC_AVAILABLE = False
 
