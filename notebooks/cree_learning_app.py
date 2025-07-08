@@ -19,6 +19,8 @@ import wave
 import streamlit.components.v1 as components
 from pathlib import Path
 import subprocess
+import re
+from datetime import datetime
 
 WEBRTC_AVAILABLE = False
 
@@ -726,6 +728,384 @@ def audio_listening_page():
             if st.button("🔊", key=f"play_{fname}"):
                 st.audio(audio_bytes, format="audio/wav" if fname.endswith("wav") else "audio/mp3")
 
+def sanitize_filename(word):
+    """
+    Convert a Cree word to a valid filename.
+    
+    Args:
+        word (str): The Cree word to convert
+        
+    Returns:
+        str: Sanitized filename without extension
+    """
+    # Remove extra spaces and convert to lowercase
+    sanitized = word.strip().lower()
+    # Replace spaces with underscores
+    sanitized = sanitized.replace(" ", "_")
+    # Remove any special characters except underscores and hyphens
+    sanitized = re.sub(r'[^\w\-_]', '', sanitized)
+    # Remove multiple underscores
+    sanitized = re.sub(r'_+', '_', sanitized)
+    # Remove leading/trailing underscores
+    sanitized = sanitized.strip('_')
+    
+    return sanitized
+
+def save_audio_to_dataset(audio_bytes, word, audio_dir="../data/wav"):
+    """
+    Save uploaded audio file to the dataset directory.
+    
+    Args:
+        audio_bytes (bytes): Raw audio file bytes
+        word (str): Cree word that this audio represents
+        audio_dir (str): Directory to save the audio file
+        
+    Returns:
+        tuple: (success: bool, filepath: str, message: str)
+    """
+    try:
+        # Create directory if it doesn't exist
+        audio_dir = os.path.abspath(audio_dir)
+        os.makedirs(audio_dir, exist_ok=True)
+        
+        # Sanitize the word for filename
+        filename = sanitize_filename(word)
+        if not filename:
+            return False, "", "Invalid word - cannot create filename"
+        
+        # Create full filepath
+        filepath = os.path.join(audio_dir, f"{filename}.wav")
+        
+        # Check if file already exists
+        if os.path.exists(filepath):
+            return False, filepath, f"Audio file already exists for word: {word}"
+        
+        # Save the audio file
+        with open(filepath, "wb") as f:
+            f.write(audio_bytes)
+        
+        return True, filepath, f"Successfully saved audio for: {word}"
+        
+    except Exception as e:
+        return False, "", f"Error saving audio: {str(e)}"
+
+def update_audio_models(new_audio_path, new_label, processor, model, 
+                       features_path=None, knn_model_path=None, 
+                       labels_path=None, paths_path=None):
+    """
+    Update the audio models with a new audio file.
+    
+    Args:
+        new_audio_path (str): Path to the new audio file
+        new_label (str): Label for the new audio
+        processor: Whisper processor
+        model: Whisper model
+        features_path (str): Path to features.npy file
+        knn_model_path (str): Path to knn_model.pkl file
+        labels_path (str): Path to labels.json file
+        paths_path (str): Path to paths.json file
+        
+    Returns:
+        tuple: (success: bool, message: str)
+    """
+    try:
+        # Set default paths if not provided
+        if features_path is None:
+            features_path = os.path.join("models/audio", "features.npy")
+        if knn_model_path is None:
+            knn_model_path = os.path.join("models/audio", "knn_model.pkl")
+        if labels_path is None:
+            labels_path = os.path.join("models/audio", "labels.json")
+        if paths_path is None:
+            paths_path = os.path.join("models/audio", "paths.json")
+        
+        # Extract embedding for the new audio
+        new_embedding = extract_whisper_embedding(new_audio_path, processor, model)
+        if new_embedding is None:
+            return False, "Failed to extract embedding from new audio"
+        
+        # Load existing data
+        try:
+            existing_features = np.load(features_path)
+            with open(labels_path, 'r', encoding='utf-8') as f:
+                existing_labels = json.load(f)
+            with open(paths_path, 'r', encoding='utf-8') as f:
+                existing_paths = json.load(f)
+        except FileNotFoundError:
+            # If files don't exist, create new ones
+            existing_features = np.empty((0, new_embedding.shape[0]))
+            existing_labels = []
+            existing_paths = []
+        
+        # Check if label already exists
+        if new_label in existing_labels:
+            return False, f"Label '{new_label}' already exists in the dataset"
+        
+        # Add new data
+        updated_features = np.vstack([existing_features, new_embedding.reshape(1, -1)])
+        updated_labels = existing_labels + [new_label]
+        updated_paths = existing_paths + [new_audio_path]
+        
+        # Create and train new k-NN model
+        from sklearn.neighbors import NearestNeighbors
+        knn_model = NearestNeighbors(n_neighbors=min(5, len(updated_labels)), 
+                                   metric='euclidean', 
+                                   algorithm='auto')
+        knn_model.fit(updated_features)
+        
+        # Create backup of existing files
+        backup_suffix = datetime.now().strftime("_%Y%m%d_%H%M%S")
+        for path in [features_path, knn_model_path, labels_path, paths_path]:
+            if os.path.exists(path):
+                backup_path = path + backup_suffix + ".bak"
+                shutil.copy2(path, backup_path)
+        
+        # Save updated files
+        np.save(features_path, updated_features)
+        joblib.dump(knn_model, knn_model_path)
+        
+        with open(labels_path, 'w', encoding='utf-8') as f:
+            json.dump(updated_labels, f, ensure_ascii=False, indent=2)
+        
+        with open(paths_path, 'w', encoding='utf-8') as f:
+            json.dump(updated_paths, f, ensure_ascii=False, indent=2)
+        
+        return True, f"Successfully updated models with new audio for: {new_label}"
+        
+    except Exception as e:
+        return False, f"Error updating models: {str(e)}"
+
+def push_audio_to_github(audio_filepath, word):
+    """
+    Push a new audio file to GitHub repository.
+    
+    Args:
+        audio_filepath (str): Local path to the audio file
+        word (str): The Cree word for this audio
+        
+    Returns:
+        tuple: (success: bool, message: str)
+    """
+    try:
+        from github import InputGitAuthor, Github
+        
+        token = st.secrets["GITHUB_TOKEN"]
+        repo_url = st.secrets["GITHUB_REPO_URL"] 
+        author_name = st.secrets["GIT_AUTHOR_NAME"]
+        author_email = st.secrets["GIT_AUTHOR_EMAIL"]
+
+        # Extract repo name from URL
+        repo_name = repo_url.split("/")[-1].replace(".git", "")
+        username = repo_url.split("/")[-2]
+
+        g = Github(token)
+        repo = g.get_repo(f"{username}/{repo_name}")
+        author = InputGitAuthor(author_name, author_email)
+
+        # Read the audio file
+        with open(audio_filepath, "rb") as f:
+            audio_content = f.read()
+
+        # Create the GitHub path
+        filename = os.path.basename(audio_filepath)
+        github_path = f"data/wav/{filename}"
+
+        try:
+            # Check if file already exists
+            existing_file = repo.get_contents(github_path)
+            return False, f"Audio file already exists in repository: {filename}"
+        except:
+            # File doesn't exist, create it
+            repo.create_file(
+                path=github_path,
+                message=f"📢 Add new Cree audio: {word} - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+                content=audio_content,
+                author=author,
+                branch="main"
+            )
+            return True, f"Successfully uploaded audio for '{word}' to GitHub"
+
+    except Exception as e:
+        return False, f"Error pushing to GitHub: {str(e)}"
+
+def push_updated_audio_models_to_github():
+    """
+    Push updated audio model files to GitHub.
+    
+    Returns:
+        tuple: (success: bool, message: str)
+    """
+    try:
+        from github import InputGitAuthor, Github
+        
+        token = st.secrets["GITHUB_TOKEN"]
+        repo_url = st.secrets["GITHUB_REPO_URL"] 
+        author_name = st.secrets["GIT_AUTHOR_NAME"]
+        author_email = st.secrets["GIT_AUTHOR_EMAIL"]
+
+        # Extract repo name from URL
+        repo_name = repo_url.split("/")[-1].replace(".git", "")
+        username = repo_url.split("/")[-2]
+
+        g = Github(token)
+        repo = g.get_repo(f"{username}/{repo_name}")
+        author = InputGitAuthor(author_name, author_email)
+
+        # Files to push
+        model_files = {
+            "models/audio/features.npy": "binary",
+            "models/audio/knn_model.pkl": "binary",
+            "models/audio/labels.json": "text",
+            "models/audio/paths.json": "text"
+        }
+
+        success_count = 0
+        for file_path, file_type in model_files.items():
+            if not os.path.exists(file_path):
+                continue
+                
+            with open(file_path, "rb") as f:
+                content_bytes = f.read()
+
+            if file_type == "text":
+                encoded_content = content_bytes.decode("utf-8")
+            else:
+                encoded_content = content_bytes
+
+            try:
+                remote_file = repo.get_contents(file_path)
+                # Update existing file
+                repo.update_file(
+                    path=file_path,
+                    message=f"🔄 Update audio model - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+                    content=encoded_content,
+                    sha=remote_file.sha,
+                    author=author,
+                    branch="main"
+                )
+                success_count += 1
+            except:
+                # Create new file
+                repo.create_file(
+                    path=file_path,
+                    message=f"📦 Create audio model - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+                    content=encoded_content,
+                    author=author,
+                    branch="main"
+                )
+                success_count += 1
+
+        return True, f"Successfully updated {success_count} audio model files on GitHub"
+
+    except Exception as e:
+        return False, f"Error pushing audio models to GitHub: {str(e)}"
+
+def add_audio_to_dataset_ui():
+    """
+    Streamlit UI for adding new audio to the dataset.
+    """
+    st.subheader("➕ Add New Audio to Dataset")
+    
+    with st.form("add_audio_form"):
+        st.markdown("### 📤 Upload New Audio")
+        
+        # Word input
+        word = st.text_input(
+            "Cree Word *", 
+            placeholder="Enter the Cree word (e.g., 'acim' or 'acosis awa')",
+            help="Spaces will be converted to underscores in the filename"
+        )
+        
+        # Audio file upload
+        uploaded_audio = st.file_uploader(
+            "Audio File *", 
+            type=["wav"],
+            help="Upload a WAV file (recommended: 16kHz, mono, 2-30 seconds)"
+        )
+        
+        # Preview section
+        if word:
+            filename = sanitize_filename(word)
+            if filename:
+                st.info(f"💾 This will be saved as: `{filename}.wav`")
+            else:
+                st.error("❌ Invalid word - cannot create filename")
+        
+        if uploaded_audio:
+            st.audio(uploaded_audio.getvalue(), format="audio/wav")
+        
+        # Submit button
+        submitted = st.form_submit_button("🔥 Add to Dataset", type="primary")
+        
+        if submitted:
+            if not word or not uploaded_audio:
+                st.error("❌ Please provide both a word and an audio file")
+                return
+            
+            if not sanitize_filename(word):
+                st.error("❌ Invalid word - cannot create filename")
+                return
+            
+            # Save audio file
+            with st.spinner("💾 Saving audio file..."):
+                success, filepath, message = save_audio_to_dataset(
+                    uploaded_audio.getvalue(), 
+                    word
+                )
+            
+            if not success:
+                st.error(f"❌ {message}")
+                return
+            
+            st.success(f"✅ {message}")
+            
+            # Update models
+            with st.spinner("🔄 Updating audio models..."):
+                processor, model, device = load_whisper_model()
+                if processor and model:
+                    success, message = update_audio_models(
+                        filepath, word, processor, model
+                    )
+                    
+                    if success:
+                        st.success(f"✅ {message}")
+                        
+                        # Ask if user wants to push to GitHub
+                        if st.button("🚀 Push to GitHub Repository"):
+                            with st.spinner("📤 Uploading to GitHub..."):
+                                # Push audio file
+                                audio_success, audio_msg = push_audio_to_github(filepath, word)
+                                if audio_success:
+                                    st.success(f"✅ {audio_msg}")
+                                else:
+                                    st.error(f"❌ {audio_msg}")
+                                
+                                # Push model files
+                                model_success, model_msg = push_updated_audio_models_to_github()
+                                if model_success:
+                                    st.success(f"✅ {model_msg}")
+                                else:
+                                    st.error(f"❌ {model_msg}")
+                    else:
+                        st.error(f"❌ {message}")
+                else:
+                    st.error("❌ Failed to load Whisper models")
+    
+    # Display current dataset stats
+    with st.expander("📊 Current Dataset Statistics"):
+        try:
+            labels_path = os.path.join("models/audio", "labels.json")
+            if os.path.exists(labels_path):
+                with open(labels_path, 'r', encoding='utf-8') as f:
+                    labels = json.load(f)
+                st.write(f"Total audio samples: {len(labels)}")
+                st.write("Recent additions:")
+                for label in labels[-5:]:
+                    st.write(f"• {label}")
+            else:
+                st.write("No audio dataset found")
+        except Exception as e:
+            st.error(f"Error reading dataset: {str(e)}")
 
 def audio_learning_app():
     """Main function to run the Audio Learning/Matching App with two modes:
@@ -735,12 +1115,15 @@ def audio_learning_app():
     # Sidebar for audio page selection
     with st.sidebar:
         st.header("Audio Options")
-        selected_audio_page = st.radio("Choose a view:", ["🎧 Listen to Dataset", "🎙️ Match Audio"])
+        selected_audio_page = st.radio("Choose a view:", ["🎧 Listen to Dataset", "🎙️ Match Audio", "➕ Add Audio"])
 
     # Render based on user selection
     if selected_audio_page == "🎧 Listen to Dataset":
         audio_listening_page()
         return  # Exit to avoid loading models, etc.
+    elif selected_audio_page == "➕ Add Audio":
+        add_audio_to_dataset_ui()
+        return
 
     st.header("🎵 Audio Matching")
     st.markdown("Upload an audio file or record audio to find similar audio clips from the trained dataset.")
